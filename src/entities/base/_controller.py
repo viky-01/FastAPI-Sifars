@@ -136,8 +136,12 @@ class BaseController(Generic[ServiceT]):
             return JSONResponse(status_code=204, content=None)
         except sqlalchemy.exc.SQLAlchemyError as e:
             logger.warning(e)
+            detail = str(e.orig) if hasattr(e, "orig") else str(e)
+            if "not found" in detail.lower():
+                raise HTTPException(status_code=404, detail=detail)
             raise HTTPException(
-                status_code=400, detail=str(e.orig) if hasattr(e, "orig") else str(e)
+                status_code=400,
+                detail=detail,
             )
         except HTTPException as e:
             logger.warning(e)
