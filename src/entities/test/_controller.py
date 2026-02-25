@@ -12,5 +12,5 @@ class TestController(BaseController):
     async def create(self, data: TestSchema = Body(...)):
         return await super().create(data.model_dump())
 
-    async def patch(self, id: int, data: TestSchema = Body(...)):
-        return await super().patch(id, data.model_dump())
+    async def patch(self, id: int, data: dict = Body(...)):
+        return await super().patch(id, data)

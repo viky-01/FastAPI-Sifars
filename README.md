@@ -1,36 +1,95 @@
 # FastAPI Template
 
-A simple template for building APIs with FastAPI, a modern, fast web framework for building APIs with Python 3.7+ based on standard Python type hints.
+Production-ready FastAPI template with:
 
-## Features
+- Generated CRUD layers
+- Middleware-based JWT authorization
+- Auto audit logging
+- Async test setup
 
-- FastAPI for high-performance API development
-- Automatic interactive API documentation with Swagger UI
-- Built-in support for async operations
-- Easy integration with databases (e.g., SQLAlchemy)
-- Pydantic for data validation
-- CORS support for cross-origin requests
+## Quick Start
 
-## Installation
+1. Install deps
 
-1. Create a virtual environment:
+```bash
+poetry install
+```
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+2. Set env in `.env`
 
-2. Install dependencies:
-   ```bash
-   poetry install
-   ```
+```env
+SQLALCHEMY_DATABASE_URI=sqlite+aiosqlite:///./test.db
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:8000
+```
 
-## Usage
+3. Run app
 
-1. Run the development server:
+```bash
+python main.py
+```
 
-   ```bash
-   uvicorn src.app:app --reload
-   ```
+Open docs: `http://127.0.0.1:8000/docs`
 
-2. Open your browser and navigate to `http://127.0.0.1:8000/docs` for interactive API documentation.
+## Create New Entity
+
+1. Add model in `src/entities/<entity>/_model.py`
+2. Run:
+
+```bash
+python generate_cruds.py
+```
+
+This generates `_repository.py`, `_service.py`, `_controller.py`, `_schema.py`.
+
+## Authorization (Plug-and-Play)
+
+Authorization is enforced centrally in middleware from JWT claims.
+No per-controller permission wiring required.
+
+Required permission is inferred from route + method:
+
+- `POST /api/v1/<entity>/` -> `<entity>:create`
+- `GET /api/v1/<entity>/` -> `<entity>:list`
+- `GET /api/v1/<entity>/{id}` -> `<entity>:read`
+- `PUT|PATCH /api/v1/<entity>/{id}` -> `<entity>:update`
+- `DELETE /api/v1/<entity>/{id}` -> `<entity>:delete`
+
+JWT can provide:
+
+- direct permissions: `permissions` (e.g. `"orders:*"`, `"*:read"`)
+- role mapping: `roles` + `role_permissions`
+
+Example payload:
+
+```json
+{
+  "sub": "user@example.com",
+  "roles": ["manager"],
+  "permissions": ["products:read"],
+  "role_permissions": {
+    "manager": ["orders:*", "products:update"]
+  }
+}
+```
+
+## Testing
+
+Run tests:
+
+```bash
+pytest -v
+```
+
+Base reusable entity test class:
+
+- `tests/base_entity_api_test.py`
+
+Example implementation:
+
+- `tests/test_test_entity.py`
+
+## Notes
+
+- Audit logs are automatic via SQLAlchemy events.
+- Migrations run on startup.
+- Supported DBs: PostgreSQL, MySQL, SQLite.
