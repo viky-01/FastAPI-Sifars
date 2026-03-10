@@ -113,16 +113,16 @@ class BaseEntityApiTest:
         await test_db.commit()
 
         response = await client.get(
-            f"{self.endpoint}?search=%{self.filter_value}%",
+            self.endpoint,
+            params={"search": f"%{self.filter_value}%"},
             headers=auth_headers_user,
         )
 
         assert response.status_code == 200, response.text
         data = response.json()
+        search_value = str(self.filter_value).lower()
         assert len(data["data"]) >= 1
-        assert any(
-            self.filter_value.lower() in str(item).lower() for item in data["data"]
-        )
+        assert any(search_value in str(item).lower() for item in data["data"])
 
     @pytest.mark.asyncio
     async def test_get(

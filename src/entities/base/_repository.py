@@ -30,6 +30,13 @@ class BaseRepository:
     def __init__(self, model: Type[ModelT]):
         self.model = model
 
+    def _prepare_filter_by(self, filter_by: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        column_names = [c.key for c in self.model.__table__.columns]
+        sanitized_filter = {
+            k: v for k, v in (filter_by or {}).items() if k in column_names
+        }
+        return self._convert_filter_by(sanitized_filter)
+
     def _convert_filter_by(self, filter_by: Dict[str, Any]) -> Dict[str, Any]:
         converted = {}
         for k, v in filter_by.items():
@@ -109,8 +116,7 @@ class BaseRepository:
         search: str | None = None,
     ):
         column_names = [c.key for c in self.model.__table__.columns]
-        filter_by = {k: v for k, v in (filter_by or {}).items() if k in column_names}
-        filter_by = self._convert_filter_by(filter_by)
+        filter_by = self._prepare_filter_by(filter_by)
         order_by = [
             field for field in (order_by or []) if field.lstrip("-") in column_names
         ]
@@ -161,9 +167,7 @@ class BaseRepository:
         filter_by: Optional[Dict[str, Any]] = None,
         search: str | None = None,
     ):
-        column_names = [c.key for c in self.model.__table__.columns]
-        filter_by = {k: v for k, v in (filter_by or {}).items() if k in column_names}
-        filter_by = self._convert_filter_by(filter_by)
+        filter_by = self._prepare_filter_by(filter_by)
         search_pattern = self._normalize_search_pattern(search)
         async with self.get_session() as session:
             query: Select[Any] = (

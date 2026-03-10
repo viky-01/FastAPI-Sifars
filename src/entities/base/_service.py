@@ -16,7 +16,7 @@ class BaseService:
         self,
         page: int = 1,
         page_size: int = 10,
-        order_by: Optional[List[str]] | None = None,
+        order_by: Optional[List[str]] = None,
         filter_by: Dict[str, Any] | None = None,
         search: str | None = None,
     ):
