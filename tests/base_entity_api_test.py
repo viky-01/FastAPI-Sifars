@@ -101,6 +101,30 @@ class BaseEntityApiTest:
         )
 
     @pytest.mark.asyncio
+    async def test_list_with_search(
+        self,
+        client: AsyncClient,
+        test_db: AsyncSession,
+        auth_headers_user: Dict[str, str],
+    ):
+        one = self.make_model(1, **{self.filter_field: self.filter_value})
+        two = self.make_model(2, **{self.filter_field: self.other_filter_value})
+        test_db.add_all([one, two])
+        await test_db.commit()
+
+        response = await client.get(
+            f"{self.endpoint}?search=%{self.filter_value}%",
+            headers=auth_headers_user,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert len(data["data"]) >= 1
+        assert any(
+            self.filter_value.lower() in str(item).lower() for item in data["data"]
+        )
+
+    @pytest.mark.asyncio
     async def test_get(
         self,
         client: AsyncClient,

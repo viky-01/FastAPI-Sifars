@@ -46,9 +46,10 @@ class BaseController(Generic[ServiceT]):
         page: int = Query(1, ge=1),
         page_size: int = Query(10, ge=1, le=100),
         order_by: Optional[List[str]] = Query([]),
+        search: Optional[str] = Query(None),
     ):
         logger.debug(
-            f"{self.service.repository.model.__name__}: List with page: {page}, page_size: {page_size}, order_by: {order_by}, query_params: {request.query_params}"
+            f"{self.service.repository.model.__name__}: List with page: {page}, page_size: {page_size}, order_by: {order_by}, search: {search}, query_params: {request.query_params}"
         )
         try:
             filter_by = {}
@@ -56,12 +57,16 @@ class BaseController(Generic[ServiceT]):
                 filter_by = {
                     k: v
                     for k, v in request.query_params.items()
-                    if k not in ["page", "page_size", "order_by"]
+                    if k not in ["page", "page_size", "order_by", "search"]
                 }
             result = await self.service.list(
-                page=page, page_size=page_size, filter_by=filter_by, order_by=order_by
+                page=page,
+                page_size=page_size,
+                filter_by=filter_by,
+                order_by=order_by,
+                search=search,
             )
-            total_records = await self.service.count(filter_by=filter_by)
+            total_records = await self.service.count(filter_by=filter_by, search=search)
             return {
                 "data": result,
                 "pagination": {

@@ -10,8 +10,10 @@ from sqlalchemy import (
     String,
     Text,
     asc,
+    cast,
     desc,
     func,
+    or_,
 )
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.future import select
@@ -63,6 +65,22 @@ class BaseRepository:
                 converted[k] = v
         return converted
 
+    def _normalize_search_pattern(self, search: str | None) -> str | None:
+        if search is None:
+            return None
+        value = str(search).strip()
+        if not value:
+            return None
+        if "%" in value or "_" in value:
+            return value
+        return f"%{value}%"
+
+    def _build_search_predicates(self, search_pattern: str) -> list[Any]:
+        return [
+            cast(column, String).ilike(search_pattern)
+            for column in self.model.__table__.columns
+        ]
+
     @asynccontextmanager
     async def get_session(self):
         async with DatabaseConfig.async_session() as session:
@@ -88,6 +106,7 @@ class BaseRepository:
         page_size: int = 10,
         order_by: Optional[List[str]] = None,
         filter_by: Optional[Dict[str, Any]] = None,
+        search: str | None = None,
     ):
         column_names = [c.key for c in self.model.__table__.columns]
         filter_by = {k: v for k, v in (filter_by or {}).items() if k in column_names}
@@ -95,14 +114,13 @@ class BaseRepository:
         order_by = [
             field for field in (order_by or []) if field.lstrip("-") in column_names
         ]
+        search_pattern = self._normalize_search_pattern(search)
         offset: int = (page - 1) * page_size
         async with self.get_session() as session:
-            query: Select[Any] = (
-                select(self.model)
-                .filter_by(**filter_by)
-                .offset(offset)
-                .limit(page_size)
-            )
+            query: Select[Any] = select(self.model).filter_by(**filter_by)
+            if search_pattern:
+                query = query.where(or_(*self._build_search_predicates(search_pattern)))
+            query = query.offset(offset).limit(page_size)
             for field in order_by:
                 if field.startswith("-"):
                     query = query.order_by(desc(getattr(self.model, field[1:])))
@@ -138,14 +156,21 @@ class BaseRepository:
             await session.delete(instance)
             await session.commit()
 
-    async def count(self, filter_by: Optional[Dict[str, Any]] = None):
+    async def count(
+        self,
+        filter_by: Optional[Dict[str, Any]] = None,
+        search: str | None = None,
+    ):
         column_names = [c.key for c in self.model.__table__.columns]
         filter_by = {k: v for k, v in (filter_by or {}).items() if k in column_names}
         filter_by = self._convert_filter_by(filter_by)
+        search_pattern = self._normalize_search_pattern(search)
         async with self.get_session() as session:
             query: Select[Any] = (
                 select(func.count()).select_from(self.model).filter_by(**filter_by)
             )
+            if search_pattern:
+                query = query.where(or_(*self._build_search_predicates(search_pattern)))
             result = await session.execute(query)
             return result.scalar_one() or 0
 
