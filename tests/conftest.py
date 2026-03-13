@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator, Dict
 
@@ -78,10 +79,12 @@ async def client(test_db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.fixture
 def auth_token_admin() -> str:
+    exp = datetime.now(timezone.utc) + timedelta(hours=1)
     payload = {
         "sub": "admin@test.com",
         "email": "admin@test.com",
         "roles": ["admin"],
+        "exp": int(exp.timestamp()),
         "permissions": ["*:*"],
     }
     return jwt.encode(payload, "test-secret", algorithm="HS256")
@@ -89,11 +92,13 @@ def auth_token_admin() -> str:
 
 @pytest.fixture
 def auth_token_user() -> str:
+    exp = datetime.now(timezone.utc) + timedelta(hours=1)
     payload = {
         "sub": "user@test.com",
         "email": "user@test.com",
         "roles": ["user"],
-        "permissions": ["*:GET"],
+        "exp": int(exp.timestamp()),
+        "permissions": ["*:read.*"],
     }
     return jwt.encode(payload, "test-secret", algorithm="HS256")
 

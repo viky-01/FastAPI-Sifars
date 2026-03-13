@@ -1,7 +1,8 @@
 from fastapi import Request
-from jwt import decode
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from src.configs import verify_jwt_token
 
 from ._user_context import (
     UserContext,
@@ -13,19 +14,30 @@ from ._user_context import (
 class AuthenticationMiddleware(BaseHTTPMiddleware):
     _PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json")
 
+    def _extract_bearer_token(self, authorization_header: str) -> str:
+        if not authorization_header:
+            return ""
+        raw = authorization_header.strip()
+        if not raw:
+            return ""
+        if " " not in raw:
+            return ""
+        scheme, token = raw.split(" ", 1)
+        if scheme.lower() != "bearer":
+            return ""
+        token = token.strip()
+        if token.lower().startswith("bearer "):
+            return ""
+        return token
+
     async def _is_public_path(self, path: str) -> bool:
         return path == "/api/" or path.startswith(self._PUBLIC_PREFIXES)
 
     async def dispatch(self, request: Request, call_next):
         if await self._is_public_path(request.url.path):
             return await call_next(request)
-        token = request.headers.get("Authorization", "").replace("Bearer ", "")
-        payload = {}
-        if token:
-            try:
-                payload = decode(token, options={"verify_signature": False})
-            except Exception:
-                payload = {}
+        token = self._extract_bearer_token(request.headers.get("Authorization", ""))
+        payload = verify_jwt_token(token) if token else {}
         request.state.jwt_payload = payload
         user_context = build_user_context_from_payload(payload)
         if user_context is None:

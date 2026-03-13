@@ -71,7 +71,7 @@ def custom_openapi():
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Paste your token. Prefix with 'Bearer ' is optional in Swagger UI.",
+        "description": "Paste only the raw JWT token; Swagger adds the 'Bearer ' prefix automatically.",
     }
 
     for path, methods in openapi_schema.get("paths", {}).items():

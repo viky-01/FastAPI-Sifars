@@ -25,6 +25,8 @@ from ._model import BaseModel_
 
 ModelT = TypeVar("ModelT", bound=BaseModel_)
 
+from loguru import logger
+
 
 class BaseRepository:
     def __init__(self, model: Type[ModelT]):
@@ -97,7 +99,7 @@ class BaseRepository:
                 try:
                     await session.rollback()
                 except Exception as e2:
-                    print(f"Rollback failed: {e2}")
+                    logger.exception(f"Rollback failed: {e2}")
                 raise e
 
     async def create(self, object: ModelT):

@@ -2,6 +2,8 @@ import os
 import re
 from typing import Dict, Tuple
 
+from loguru import logger
+
 
 def parse_model_file(
     file_path: str, expected_class_name: str
@@ -226,7 +228,7 @@ def main():
         controller_file = os.path.join(entity_dir, "_controller.py")
 
         if os.path.exists(model_file) and not os.path.exists(controller_file):
-            print(f"Generating files for {entity}")
+            logger.debug(f"Generating files for {entity}")
 
             expected_class_name = "".join(
                 word.capitalize() for word in entity.split("_")
@@ -234,11 +236,11 @@ def main():
             class_name, table_name, fields = parse_model_file(
                 model_file, expected_class_name
             )
-            print(
+            logger.debug(
                 f"Parsed {entity}: class={class_name}, table={table_name}, fields={fields}"
             )
             if not class_name:
-                print(f"Could not find class {expected_class_name} for {entity}")
+                logger.debug(f"Could not find class {expected_class_name} for {entity}")
                 continue
 
             # Generate repository
@@ -265,7 +267,7 @@ def main():
             update_init(entity_dir)
             update_main_init(entity, class_name, table_name)
 
-            print(f"Generated files for {entity}")
+            logger.debug(f"Generated files for {entity}")
 
 
 if __name__ == "__main__":

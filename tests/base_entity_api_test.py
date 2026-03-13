@@ -77,6 +77,18 @@ class BaseEntityApiTest:
         assert data["pagination"]["total_records"] >= 2
 
     @pytest.mark.asyncio
+    async def test_list_with_token_without_bearer_prefix(
+        self,
+        client: AsyncClient,
+        auth_token_user: str,
+    ):
+        response = await client.get(
+            self.endpoint,
+            headers={"Authorization": auth_token_user},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_list_with_filtering(
         self,
         client: AsyncClient,

@@ -46,28 +46,73 @@ This generates `_repository.py`, `_service.py`, `_controller.py`, `_schema.py`.
 Authorization is enforced centrally in middleware from JWT claims.
 No per-controller permission wiring required.
 
+JWT signature verification is configurable for different identity providers.
+
 Required permission is inferred from route + method:
 
-- `POST /api/v1/<entity>/` -> `<entity>:create`
-- `GET /api/v1/<entity>/` -> `<entity>:list`
-- `GET /api/v1/<entity>/{id}` -> `<entity>:read`
-- `PUT|PATCH /api/v1/<entity>/{id}` -> `<entity>:update`
-- `DELETE /api/v1/<entity>/{id}` -> `<entity>:delete`
+- `POST /api/v1/<entity>/` -> `<entity>:create.one`
+- `GET /api/v1/<entity>/` -> `<entity>:read.all`
+- `GET /api/v1/<entity>/{id}` -> `<entity>:read.one`
+- `PUT|PATCH /api/v1/<entity>/{id}` -> `<entity>:update.one`
+- `DELETE /api/v1/<entity>/{id}` -> `<entity>:delete.one`
+
+Permission format conventions:
+
+- Canonical format: `<resource>:<action>.<scope>` (e.g. `audit_logs:read.all`)
+- Also accepted as input: `<resource>.<action>.<scope>` (normalized internally)
+- Allowed `action`: `read | create | update | delete | *`
+- Allowed `scope`: `one | all | *`
+
+### JWT verification config
+
+Supported providers:
+
+- `shared_secret` (HS256-style)
+- `public_key` (static PEM public key)
+- `jwks` (OIDC/JWKS endpoint, ideal for Keycloak/Auth0/Cognito)
+- `auto` (infers `jwks`/`public_key`/`shared_secret` from env)
+
+Relevant env vars:
+
+- `JWT_PROVIDER` = `shared_secret` | `public_key` | `jwks` | `auto`
+- `JWT_ALGORITHMS` (comma-separated, e.g. `RS256` or `HS256`)
+- `JWT_SECRET` (required for `shared_secret`)
+- `JWT_PUBLIC_KEY` (required for `public_key`)
+- `JWT_JWKS_URL` (required for `jwks` unless `JWT_ISSUER` is set)
+- `JWT_JWKS_TIMEOUT_MS` (optional, default `3000`)
+- `JWT_JWKS_CACHE_TTL_SEC` (optional, default `300`)
+- `JWT_JWKS_CACHE_MAX_KEYS` (optional, default `100`)
+- `JWT_ISSUER` (optional but recommended)
+- `JWT_AUDIENCE` (optional but recommended)
+- `JWT_REQUIRE_EXP` (default `true`)
+- `JWT_VERIFY_NBF` (default `true`)
+- `JWT_VERIFY_IAT` (default `false`)
+
+#### Keycloak example
+
+```env
+JWT_PROVIDER=jwks
+JWT_ALGORITHMS=RS256
+JWT_JWKS_URL=https://<keycloak-host>/realms/<realm>/protocol/openid-connect/certs
+JWT_ISSUER=https://<keycloak-host>/realms/<realm>
+JWT_AUDIENCE=<client-id>
+JWT_REQUIRE_EXP=true
+```
 
 JWT can provide:
 
-- direct permissions: `permissions` (e.g. `"orders:*"`, `"*:read"`)
-- role mapping: `roles` + `role_permissions`
+- direct permissions: `permissions` (e.g. `"orders:read.all"`, `"*:read.all"`, `"orders:*.*"`)
+- resource-method mapping: `permissions_map` or `permissions_by_resource` (e.g. `"orders": ["read.all", "update.one", "*.*"]`)
 
 Example payload:
 
 ```json
 {
   "sub": "user@example.com",
-  "roles": ["manager"],
-  "permissions": ["products:read"],
-  "role_permissions": {
-    "manager": ["orders:*", "products:update"]
+  "permissions": ["products:read.one", "orders:read.all"],
+  "permissions_map": {
+    "orders": ["read.all"],
+    "products": ["read.one", "update.one"]
   }
 }
 ```
@@ -93,3 +138,21 @@ Example implementation:
 - Audit logs are automatic via SQLAlchemy events.
 - Migrations run on startup.
 - Supported DBs: PostgreSQL, MySQL, SQLite.
+
+## JWT verification at scale
+
+Token validation is performed per protected request, but verification is local in the API process.
+
+- `JWT_PROVIDER=shared_secret`: signature verification uses `JWT_SECRET` locally.
+- `JWT_PROVIDER=public_key`: signature verification uses `JWT_PUBLIC_KEY` locally.
+- `JWT_PROVIDER=jwks`: token is still verified locally; JWKS endpoint is used only to resolve public keys (typically cached, fetched on miss/rotation).
+
+This means the app does **not** call the identity provider for full token introspection on every request by default.
+
+### Production recommendations
+
+- Prefer `jwks` for Keycloak/Auth0/Cognito to support key rotation.
+- Set `JWT_ISSUER` and `JWT_AUDIENCE` in production.
+- Keep `JWT_REQUIRE_EXP=true`.
+- Use short-lived access tokens and refresh-token flow.
+- Scale API workers by request throughput (JWT verification is usually not the primary bottleneck compared to DB/business logic).
