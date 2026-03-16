@@ -85,7 +85,7 @@ def auth_token_admin() -> str:
         "email": "admin@test.com",
         "roles": ["admin"],
         "exp": int(exp.timestamp()),
-        "permissions": ["*:*"],
+        "permissions": ["*:*.*"],
     }
     return jwt.encode(payload, "test-secret", algorithm="HS256")
 
@@ -99,6 +99,7 @@ def auth_token_user() -> str:
         "roles": ["user"],
         "exp": int(exp.timestamp()),
         "permissions": ["*:read.*"],
+        "permissions_map": {"*": ["read.*"]},
     }
     return jwt.encode(payload, "test-secret", algorithm="HS256")
 

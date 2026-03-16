@@ -60,7 +60,8 @@ def parse_model_file(
         nullable = True
         if "nullable=False" in options or "nullable = False" in options:
             nullable = False
-        fields[field_name] = (col_type, nullable)
+        unique = "unique=True" in options or "unique = True" in options
+        fields[field_name] = (col_type, nullable, unique)
 
     return expected_class_name, table_name, fields
 
@@ -124,7 +125,7 @@ class {class_name}Controller(BaseController):
         return await super().create(data.model_dump())
 
     async def patch(self, id: int, data: {class_name}Schema = Body(...)):
-        return await super().patch(id, data.model_dump())
+        return await super().patch(id, data.model_dump(exclude_none=True))
 """
     with open(file_path, "w") as f:
         f.write(content)
@@ -137,9 +138,9 @@ def generate_schema(
     file_path: str,
 ):
     imports = "from typing import Any, Dict, Optional\n\n"
-    has_date = any("date" in map_sqlalchemy_to_pydantic(t) for t, _ in fields.values())
+    has_date = any("date" in map_sqlalchemy_to_pydantic(t) for t, *_ in fields.values())
     has_datetime = any(
-        "datetime" in map_sqlalchemy_to_pydantic(t) for t, _ in fields.values()
+        "datetime" in map_sqlalchemy_to_pydantic(t) for t, *_ in fields.values()
     )
     if has_date or has_datetime:
         imports = "from datetime import date, datetime\n" + imports
@@ -154,12 +155,157 @@ def generate_schema(
 
 class {class_name}Schema(BaseSchema):
 """
-    for field_name, (sql_type, nullable) in fields.items():
+    for field_name, (sql_type, nullable, *_rest) in fields.items():
         pydantic_type = map_sqlalchemy_to_pydantic(sql_type)
-        if nullable:
-            pydantic_type = f"Optional[{pydantic_type}]"
-        content += f"    {field_name}: {pydantic_type}\n"
+        content += f"    {field_name}: Optional[{pydantic_type}] = None\n"
 
+    with open(file_path, "w") as f:
+        f.write(content)
+
+
+FAKE_VALUES = {
+    "String": ("str", lambda name, i: f'"{name}_{i}"'),
+    "Text": ("str", lambda name, i: f'"{name}_{i}"'),
+    "Integer": ("int", lambda name, i: f"{i}"),
+    "BigInteger": ("int", lambda name, i: f"{i}"),
+    "Boolean": ("bool", lambda name, i: "True"),
+    "Numeric": ("float", lambda name, i: f"{i}.5"),
+    "Date": ("str", lambda name, i: f'"2026-01-0{min(i, 9)}"'),
+    "DateTime": ("str", lambda name, i: f'"2026-01-0{min(i, 9)}T00:00:00"'),
+    "JSON": ("dict", lambda name, i: f'{{"key": "val_{i}"}}'),
+}
+
+# Types where make_model needs index interpolation via f-string
+_STRING_TYPES = {"String", "Text"}
+
+
+def _fake(sql_type: str, field_name: str, index: int) -> str:
+    _, fn = FAKE_VALUES.get(sql_type, ("str", lambda name, i: f'"{name}_{i}"'))
+    return fn(field_name, index)
+
+
+def generate_test(
+    entity_name: str,
+    class_name: str,
+    table_name: str,
+    fields: Dict[str, Tuple[str, bool]],
+    file_path: str,
+):
+    route_prefix = table_name.replace("_", "-")
+    endpoint = f"/api/v1/{route_prefix}/"
+
+    # Pick the first non-unique string field as filter_field, fallback to first string
+    filter_field = None
+    first_string = None
+    for fname, (ftype, nullable, *rest) in fields.items():
+        if ftype in ("String", "Text"):
+            unique = rest[0] if rest else False
+            if first_string is None:
+                first_string = fname
+            if not unique:
+                filter_field = fname
+                break
+    if not filter_field:
+        filter_field = first_string or list(fields.keys())[0]
+
+    # Build create_payload
+    create_lines = []
+    for fname, (ftype, nullable, *_) in fields.items():
+        val = _fake(ftype, fname, 1)
+        create_lines.append(f'        "{fname}": {val},')
+
+    # Build update_payload (first non-nullable field with different value)
+    update_field = None
+    for fname, (ftype, nullable, *_) in fields.items():
+        if not nullable:
+            update_field = fname
+            break
+    if not update_field:
+        update_field = list(fields.keys())[0]
+    update_type = fields[update_field][0]
+    update_val = _fake(update_type, f"updated_{update_field}", 1)
+
+    # Collect unique fields for uuid suffix in make_model
+    unique_fields = {fname for fname, (*_, unique) in fields.items() if unique}
+
+    # Build make_model — use f-strings only for string types, use `index` directly for numbers
+    model_lines = []
+    for fname, (ftype, nullable, *_) in fields.items():
+        if ftype in _STRING_TYPES:
+            if fname in unique_fields:
+                model_lines.append(
+                    f'            "{fname}": f"{fname}_{{index}}_{{_uid}}",'
+                )
+            else:
+                model_lines.append(f'            "{fname}": f"{fname}_{{index}}",')
+        elif ftype in ("Integer", "BigInteger"):
+            model_lines.append(f'            "{fname}": index,')
+        elif ftype == "Numeric":
+            model_lines.append(f'            "{fname}": index + 0.5,')
+        elif ftype == "Boolean":
+            model_lines.append(f'            "{fname}": True,')
+        elif ftype == "DateTime":
+            model_lines.append(f'            "{fname}": datetime(2026, 1, index),')
+        elif ftype == "Date":
+            model_lines.append(f'            "{fname}": date(2026, 1, index),')
+        elif ftype == "JSON":
+            model_lines.append(f'            "{fname}": {{"key": f"val_{{index}}"}},')
+        else:
+            model_lines.append(f'            "{fname}": f"{fname}_{{index}}",')
+
+    filter_type = fields[filter_field][0]
+    fv1 = _fake(filter_type, f"filter_{filter_field}", 1)
+    fv2 = _fake(filter_type, f"filter_{filter_field}", 2)
+
+    needs_uid = bool(unique_fields)
+    has_dt = any(ft in ("Date", "DateTime") for ft, *_ in fields.values())
+    imports = []
+    if needs_uid:
+        imports.append("import uuid")
+    if has_dt:
+        imports.append("from datetime import date, datetime")
+    imports_str = "\n".join(imports) + ("\n\n" if imports else "")
+    uid_line = "        _uid = uuid.uuid4().hex[:8]\n" if needs_uid else ""
+
+    # build_create_payload override for unique fields
+    build_create = ""
+    if needs_uid:
+        override_lines = []
+        for fname, (ftype, nullable, *rest) in fields.items():
+            unique = rest[0] if rest else False
+            if unique and ftype in _STRING_TYPES:
+                override_lines.append(
+                    f'        payload["{fname}"] = f"{fname}_{{uuid.uuid4().hex[:8]}}"'
+                )
+        if override_lines:
+            build_create = "\n    def build_create_payload(self):\n"
+            build_create += "        payload = dict(self.create_payload)\n"
+            build_create += "\n".join(override_lines) + "\n"
+            build_create += "        return payload\n"
+
+    content = f"""{imports_str}from src.entities.{entity_name}._model import {class_name}
+from tests.base_entity_api_test import BaseEntityApiTest
+
+
+class Test{class_name}Entity(BaseEntityApiTest):
+    __test__ = True
+    endpoint = "{endpoint}"
+    create_payload = {{
+{chr(10).join(create_lines)}
+    }}
+    update_payload = {{"{update_field}": {update_val}}}
+    invalid_payload = {{}}
+    filter_field = "{filter_field}"
+    filter_value = {fv1}
+    other_filter_value = {fv2}
+{build_create}
+    def make_model(self, index: int, **overrides):
+{uid_line}        data = {{
+{chr(10).join(model_lines)}
+        }}
+        data.update(overrides)
+        return {class_name}(**data)
+"""
     with open(file_path, "w") as f:
         f.write(content)
 
@@ -262,6 +408,11 @@ def main():
             generate_schema(
                 entity, class_name, fields, os.path.join(entity_dir, "_schema.py")
             )
+
+            # Generate test
+            test_file = os.path.join("tests", f"test_{entity}_entity.py")
+            if not os.path.exists(test_file):
+                generate_test(entity, class_name, table_name, fields, test_file)
 
             # Update __init__.py
             update_init(entity_dir)
