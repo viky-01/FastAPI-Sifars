@@ -5,9 +5,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from ._public_paths import is_public_path
+
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
-    _PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json")
     _METHOD_ACTION_MAP = {
         "GET": "read",
         "POST": "create",
@@ -74,7 +75,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         return action_allowed and scope_allowed
 
     async def _is_public_path(self, path: str) -> bool:
-        return path == "/api/" or path.startswith(self._PUBLIC_PREFIXES)
+        return is_public_path(path)
 
     async def _build_required_permission(
         self, request: Request

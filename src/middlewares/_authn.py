@@ -4,6 +4,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.configs import verify_jwt_token
 
+from ._public_paths import is_public_path
 from ._user_context import (
     UserContext,
     build_user_context_from_payload,
@@ -12,7 +13,6 @@ from ._user_context import (
 
 
 class AuthenticationMiddleware(BaseHTTPMiddleware):
-    _PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json")
 
     def _extract_bearer_token(self, authorization_header: str) -> str:
         if not authorization_header:
@@ -31,7 +31,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         return token
 
     async def _is_public_path(self, path: str) -> bool:
-        return path == "/api/" or path.startswith(self._PUBLIC_PREFIXES)
+        return is_public_path(path)
 
     async def dispatch(self, request: Request, call_next):
         if await self._is_public_path(request.url.path):

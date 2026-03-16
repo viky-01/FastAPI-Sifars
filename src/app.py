@@ -12,11 +12,11 @@ from contextlib import asynccontextmanager
 
 from alembic import command
 from alembic.config import Config
+from loguru import logger
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from loguru import logger
-
 from src.configs import DatabaseConfig
 from src.entities import api_router
 from src.middlewares import AuthenticationMiddleware, AuthorizationMiddleware
@@ -104,7 +104,7 @@ app.add_middleware(AuthorizationMiddleware)
 app.add_middleware(AuthenticationMiddleware)
 
 
-@app.get("/api/")
+@app.get("/api/health", tags=["Health Check"])
 async def check_health():
     return {"response": "Service is healthy!"}
 
