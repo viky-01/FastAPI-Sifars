@@ -87,6 +87,9 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
+app.add_middleware(AuthorizationMiddleware)
+app.add_middleware(AuthenticationMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -99,9 +102,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.add_middleware(AuthorizationMiddleware)
-app.add_middleware(AuthenticationMiddleware)
 
 
 @app.get("/api/health", tags=["Health Check"])
