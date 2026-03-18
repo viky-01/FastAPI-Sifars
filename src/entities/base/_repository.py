@@ -4,11 +4,13 @@ from typing import Any, Dict, List, Optional, Type, TypeVar
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     Date,
     Integer,
     Numeric,
     String,
     Text,
+    and_,
     asc,
     cast,
     desc,
@@ -35,9 +37,61 @@ class BaseRepository:
     def _prepare_filter_by(self, filter_by: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         column_names = [c.key for c in self.model.__table__.columns]
         sanitized_filter = {
-            k: v for k, v in (filter_by or {}).items() if k in column_names
+            k: v
+            for k, v in (filter_by or {}).items()
+            if k in column_names
+            and not k.endswith("__in")
+            and not k.endswith("__isnull")
+            and not k.endswith("__gte")
+            and not k.endswith("__lte")
         }
         return self._convert_filter_by(sanitized_filter)
+
+    def _prepare_in_filters(self, filter_by: Optional[Dict[str, Any]]) -> List[Any]:
+        column_names = [c.key for c in self.model.__table__.columns]
+        predicates = []
+        for k, v in (filter_by or {}).items():
+            if k.endswith("__in"):
+                col_name = k[:-4]
+                if col_name not in column_names:
+                    continue
+                values = [val.strip() for val in str(v).split(",") if val.strip()]
+                if values:
+                    predicates.append(getattr(self.model, col_name).in_(values))
+            elif k.endswith("__isnull"):
+                col_name = k[:-8]
+                if col_name not in column_names:
+                    continue
+                col = getattr(self.model, col_name)
+                if str(v) in ("1", "true", "True"):
+                    predicates.append(or_(col.is_(None), col == ""))
+                else:
+                    predicates.append(and_(col.isnot(None), col != ""))
+            elif k.endswith("__gte"):
+                col_name = k[:-5]
+                if col_name not in column_names:
+                    continue
+                col = getattr(self.model, col_name)
+                col_type = self.model.__table__.columns[col_name].type
+                if isinstance(col_type, Date):
+                    from datetime import datetime as dt
+
+                    predicates.append(col >= dt.strptime(str(v), "%Y-%m-%d").date())
+                else:
+                    predicates.append(col >= v)
+            elif k.endswith("__lte"):
+                col_name = k[:-5]
+                if col_name not in column_names:
+                    continue
+                col = getattr(self.model, col_name)
+                col_type = self.model.__table__.columns[col_name].type
+                if isinstance(col_type, Date):
+                    from datetime import datetime as dt
+
+                    predicates.append(col <= dt.strptime(str(v), "%Y-%m-%d").date())
+                else:
+                    predicates.append(col <= v)
+        return predicates
 
     def _convert_filter_by(self, filter_by: Dict[str, Any]) -> Dict[str, Any]:
         converted = {}
@@ -63,6 +117,8 @@ class BaseRepository:
                     converted[k] = datetime.strptime(str(v), "%Y-%m-%d").date()
                 except ValueError:
                     raise ValueError(f"Invalid date value for {k}: {v}")
+            elif isinstance(col_type, Boolean):
+                converted[k] = str(v).lower() in ("1", "true")
             elif isinstance(col_type, JSON):
                 import json
 
@@ -118,6 +174,7 @@ class BaseRepository:
         search: str | None = None,
     ):
         column_names = [c.key for c in self.model.__table__.columns]
+        in_predicates = self._prepare_in_filters(filter_by)
         filter_by = self._prepare_filter_by(filter_by)
         order_by = [
             field for field in (order_by or []) if field.lstrip("-") in column_names
@@ -126,6 +183,8 @@ class BaseRepository:
         offset: int = (page - 1) * page_size
         async with self.get_session() as session:
             query: Select[Any] = select(self.model).filter_by(**filter_by)
+            if in_predicates:
+                query = query.where(and_(*in_predicates))
             if search_pattern:
                 query = query.where(or_(*self._build_search_predicates(search_pattern)))
             query = query.offset(offset).limit(page_size)
@@ -169,12 +228,15 @@ class BaseRepository:
         filter_by: Optional[Dict[str, Any]] = None,
         search: str | None = None,
     ):
+        in_predicates = self._prepare_in_filters(filter_by)
         filter_by = self._prepare_filter_by(filter_by)
         search_pattern = self._normalize_search_pattern(search)
         async with self.get_session() as session:
             query: Select[Any] = (
                 select(func.count()).select_from(self.model).filter_by(**filter_by)
             )
+            if in_predicates:
+                query = query.where(and_(*in_predicates))
             if search_pattern:
                 query = query.where(or_(*self._build_search_predicates(search_pattern)))
             result = await session.execute(query)
