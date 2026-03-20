@@ -125,7 +125,7 @@ class {class_name}Controller(BaseController):
         return await super().create(data.model_dump())
 
     async def patch(self, id: int, data: {class_name}Schema = Body(...)):
-        return await super().patch(id, data.model_dump(exclude_none=True))
+        return await super().patch(id, data.model_dump(exclude_unset=True))
 """
     with open(file_path, "w") as f:
         f.write(content)
