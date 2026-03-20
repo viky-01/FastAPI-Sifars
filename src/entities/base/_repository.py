@@ -20,7 +20,6 @@ from sqlalchemy import (
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.future import select
 from sqlalchemy.sql import Select
-
 from src.configs import DatabaseConfig
 
 from ._model import BaseModel_
@@ -44,6 +43,8 @@ class BaseRepository:
             and not k.endswith("__isnull")
             and not k.endswith("__gte")
             and not k.endswith("__lte")
+            and ","
+            not in str(v)  # comma-separated values handled by _prepare_in_filters
         }
         return self._convert_filter_by(sanitized_filter)
 
@@ -55,9 +56,25 @@ class BaseRepository:
                 col_name = k[:-4]
                 if col_name not in column_names:
                     continue
-                values = [val.strip() for val in str(v).split(",") if val.strip()]
-                if values:
-                    predicates.append(getattr(self.model, col_name).in_(values))
+                raw_values = [val.strip() for val in str(v).split(",") if val.strip()]
+                if raw_values:
+                    col_type = self.model.__table__.columns[col_name].type
+                    if isinstance(col_type, (BigInteger, Integer)):
+                        values = [int(x) for x in raw_values if x.isdigit()]
+                    else:
+                        values = raw_values
+                    if values:
+                        predicates.append(getattr(self.model, col_name).in_(values))
+            elif k in column_names and "," in str(v):
+                raw_values = [val.strip() for val in str(v).split(",") if val.strip()]
+                if raw_values:
+                    col_type = self.model.__table__.columns[k].type
+                    if isinstance(col_type, (BigInteger, Integer)):
+                        values = [int(x) for x in raw_values if x.isdigit()]
+                    else:
+                        values = raw_values
+                    if values:
+                        predicates.append(getattr(self.model, k).in_(values))
             elif k.endswith("__isnull"):
                 col_name = k[:-8]
                 if col_name not in column_names:
@@ -101,7 +118,7 @@ class BaseRepository:
             if isinstance(col_type, (BigInteger, Integer)):
                 try:
                     converted[k] = int(v)
-                except ValueError:
+                except (ValueError, TypeError):
                     raise ValueError(f"Invalid integer value for {k}: {v}")
             elif isinstance(col_type, (String, Text)):
                 converted[k] = str(v)
@@ -194,7 +211,7 @@ class BaseRepository:
                 else:
                     query = query.order_by(asc(getattr(self.model, field)))
             result = await session.execute(query)
-            return [item for item in result.scalars().all()]
+            return [item for item in result.scalars().unique().all()]
 
     async def get(self, id: int):
         async with self.get_session() as session:
