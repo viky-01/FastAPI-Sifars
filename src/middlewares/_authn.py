@@ -1,15 +1,12 @@
-from fastapi import Request
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from src.configs import verify_jwt_token
 
 from ._public_paths import is_public_path
-from ._user_context import (
-    UserContext,
-    build_user_context_from_payload,
-    set_current_user,
-)
+from ._user_context import build_user_context_from_payload, set_current_user
 
 
 class AuthenticationMiddleware(BaseHTTPMiddleware):
@@ -37,22 +34,30 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if await self._is_public_path(request.url.path):
             return await call_next(request)
         token = self._extract_bearer_token(request.headers.get("Authorization", ""))
-        payload = verify_jwt_token(token) if token else {}
+        if not token:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing authentication token"},
+            )
+        payload = verify_jwt_token(token)
+        if payload is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired token"},
+            )
         request.state.jwt_payload = payload
         user_context = build_user_context_from_payload(payload)
         if user_context is None:
-            user_context = UserContext(user_id="system")
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid token payload"},
+            )
         set_current_user(user_context)
         request.state.user = user_context
         try:
-            if user_context.user_id != "system":
-                logger.debug(
-                    f"Authenticated request: {request.method} {request.url.path} by {user_context.user_id}"
-                )
-            else:
-                logger.debug(
-                    f"Unauthenticated request: {request.method} {request.url.path}"
-                )
+            logger.debug(
+                f"Authenticated request: {request.method} {request.url.path} by {user_context.user_id}"
+            )
             return await call_next(request)
         finally:
             set_current_user(None)

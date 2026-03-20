@@ -269,11 +269,4 @@ def reset_jwt_verifier() -> None:
 
 
 def verify_jwt_token(token: str) -> dict:
-    try:
-        return get_jwt_verifier().verify_token(token)
-    except JWTVerificationError as exc:
-        logger.debug(f"JWT verification failed ({exc.code}): {exc}")
-        return {}
-    except Exception as exc:  # Defensive catch to avoid auth middleware crashing
-        logger.exception(exc)
-        return {}
+    return get_jwt_verifier().verify_token(token)
