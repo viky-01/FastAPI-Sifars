@@ -1,14 +1,21 @@
+import re
 from fnmatch import fnmatch
-
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
-from ._public_paths import is_public_path
+from ._permission_resolvers import DefaultPermissionResolver, PermissionResolver
+from ._public_paths import is_authn_only_path, is_public_path
+
+_SAFE_PERMISSION_PATTERN = re.compile(r"^[a-z0-9_*:. ]+$")
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, permission_resolver: PermissionResolver | None = None):
+        super().__init__(app)
+        self._permission_resolver = permission_resolver or DefaultPermissionResolver()
+
     _METHOD_ACTION_MAP = {
         "GET": "read",
         "POST": "create",
@@ -105,40 +112,18 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def _extract_permissions(
         self, payload: dict
     ) -> tuple[list[str], dict[str, list[str]]]:
-        permissions = payload.get("permissions") or []
+        raw_permissions = self._permission_resolver.extract_raw_permissions(payload)
         permissions_map = (
             payload.get("permissions_map")
             or payload.get("permissions_by_resource")
             or {}
         )
-        if isinstance(permissions, dict):
-            permissions_map = permissions
-            permissions = []
-        if not isinstance(permissions, list):
-            permissions = [permissions] if permissions else []
-        keycloak_roles: list[str] = []
-        resource_access = payload.get("resource_access")
-        if isinstance(resource_access, dict):
-            for resource_info in resource_access.values():
-                if not isinstance(resource_info, dict):
-                    continue
-                resource_roles = resource_info.get("roles") or []
-                if isinstance(resource_roles, list):
-                    keycloak_roles.extend(str(role) for role in resource_roles)
-                elif resource_roles:
-                    keycloak_roles.append(str(resource_roles))
-
-        realm_access = payload.get("realm_access")
-        if isinstance(realm_access, dict):
-            realm_roles = realm_access.get("roles") or []
-            if isinstance(realm_roles, list):
-                keycloak_roles.extend(str(role) for role in realm_roles)
-            elif realm_roles:
-                keycloak_roles.append(str(realm_roles))
+        if isinstance(payload.get("permissions"), dict):
+            permissions_map = payload["permissions"]
 
         permissions = [
             self._normalize_permission_string(p)
-            for p in [*permissions, *keycloak_roles]
+            for p in raw_permissions
             if str(p).strip() and self._is_valid_permission_pattern(str(p))
         ]
         if not isinstance(permissions_map, dict):
@@ -211,6 +196,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 for expected_permission in expected_permissions
             )
             for user_permission in permissions
+            if _SAFE_PERMISSION_PATTERN.match(user_permission)
         )
 
     async def _check_permission(
@@ -232,8 +218,15 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if await self._is_public_path(request.url.path):
             return await call_next(request)
+        if is_authn_only_path(request.url.path):
+            return await call_next(request)
         required_permission = await self._build_required_permission(request)
         if required_permission is None:
+            if request.url.path.startswith("/api/v1/"):
+                return JSONResponse(
+                    status_code=405,
+                    content={"detail": "Method not allowed"},
+                )
             return await call_next(request)
         user = getattr(request.state, "user", None)
         if user is None or user.user_id == "system":
