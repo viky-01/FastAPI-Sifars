@@ -1,38 +1,47 @@
 import os
-import threading
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.middlewares import get_current_user
 
+_engine = None
+_session_factory = None
+
 
 class DatabaseConfig:
-    _thread_local = threading.local()
 
     @classmethod
     def get_engine(cls):
-        if not hasattr(cls._thread_local, "engine"):
-            cls._thread_local.engine = create_async_engine(
-                url=os.getenv("SQLALCHEMY_DATABASE_URI"),
+        global _engine
+        if _engine is None:
+            db_uri = os.getenv("SQLALCHEMY_DATABASE_URI")
+            if not db_uri:
+                raise RuntimeError(
+                    "SQLALCHEMY_DATABASE_URI environment variable is not set. "
+                    "Please configure the database connection string."
+                )
+            _engine = create_async_engine(
+                url=db_uri,
                 pool_recycle=1800,
                 pool_size=5,
-                max_overflow=45,
+                max_overflow=10,
                 pool_pre_ping=True,
-                pool_timeout=60,
+                pool_timeout=30,
             )
-        return cls._thread_local.engine
+        return _engine
 
     @classmethod
     def _get_session_factory(cls):
-        if not hasattr(cls._thread_local, "session_factory"):
-            cls._thread_local.session_factory = async_sessionmaker(
+        global _session_factory
+        if _session_factory is None:
+            _session_factory = async_sessionmaker(
                 bind=cls.get_engine(),
                 autoflush=False,
                 autocommit=False,
                 expire_on_commit=False,
             )
-        return cls._thread_local.session_factory
+        return _session_factory
 
     @classmethod
     @asynccontextmanager
