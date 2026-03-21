@@ -122,10 +122,10 @@ class {class_name}Controller(BaseController):
         super().__init__({class_name}Service)
 
     async def create(self, data: {class_name}Schema = Body(...)):
-        return await super().create(data.model_dump())
+        return await super().create(data=data.model_dump())
 
     async def patch(self, id: int, data: {class_name}Schema = Body(...)):
-        return await super().patch(id, data.model_dump(exclude_unset=True))
+        return await super().patch(id=id, data=data.model_dump(exclude_none=True))
 """
     with open(file_path, "w") as f:
         f.write(content)
