@@ -24,8 +24,8 @@ class DatabaseConfig:
             _engine = create_async_engine(
                 url=db_uri,
                 pool_recycle=1800,
-                pool_size=5,
-                max_overflow=10,
+                pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+                max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
                 pool_pre_ping=True,
                 pool_timeout=30,
             )
