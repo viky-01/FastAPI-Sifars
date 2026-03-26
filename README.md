@@ -4,9 +4,9 @@ This repository now includes:
 
 - FastAPI + Poetry project setup
 - SQLAlchemy + Alembic migrations
-- PostgreSQL-backed knowledge storage
+- PostgreSQL-backed knowledge + metadata storage
 - CRUD APIs for knowledge records
-- Gemini + Pinecone powered `/ask` RAG endpoint
+- Gemini + Pinecone powered `/ask` RAG endpoint (Pinecone is the vector store)
 
 ## Project Structure
 
@@ -42,6 +42,10 @@ Required variables:
 - `GEMINI_API_KEY`
 - `PINECONE_API_KEY`
 - `PINECONE_INDEX_NAME`
+
+> Note: This project currently uses **both** PostgreSQL and Pinecone.
+> Pinecone stores vectors, while PostgreSQL stores knowledge records/chunks and IDs used by CRUD and source retrieval.
+> If you want a Pinecone-only architecture, code changes are required (it is not yet supported out of the box).
 
 ## 3) Run PostgreSQL locally
 
