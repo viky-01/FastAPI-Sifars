@@ -1,4 +1,6 @@
 import os
+import time
+import uuid
 from typing import Any, Dict, List
 
 from sqlalchemy import select
@@ -16,6 +18,19 @@ class KnowledgeService(BaseService):
         super().__init__(KnowledgeRepository)
         self.chunk_repository = KnowledgeChunkRepository()
         self.embedding_repository = ChunkEmbeddingRepository()
+        self._db_uri = os.getenv("SQLALCHEMY_DATABASE_URI")
+
+    def _is_pinecone_only_mode(self) -> bool:
+        explicit_flag = os.getenv("PINECONE_ONLY_MODE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        return explicit_flag or not self._db_uri
+
+    def _build_knowledge_id(self) -> int:
+        return int(time.time() * 1000) + (uuid.uuid4().int % 1000)
 
     def _chunk_text(self, text: str, chunk_size: int = 900, overlap: int = 120) -> List[str]:
         normalized = " ".join(text.split())
@@ -94,11 +109,75 @@ class KnowledgeService(BaseService):
             )
 
     async def create(self, data: dict):
+        if self._is_pinecone_only_mode():
+            content = str(data.get("content", "")).strip()
+            title = str(data.get("title", "")).strip()
+            if not content or not title:
+                raise RuntimeError("Both 'title' and 'content' are required")
+
+            knowledge_id = self._build_knowledge_id()
+            chunks = self._chunk_text(content)
+            index = self._get_pinecone_index()
+
+            vectors = []
+            for idx, chunk in enumerate(chunks):
+                vector_id = f"knowledge-{knowledge_id}-chunk-{idx}"
+                vectors.append(
+                    {
+                        "id": vector_id,
+                        "values": self._get_embedding(chunk),
+                        "metadata": {
+                            "knowledge_id": knowledge_id,
+                            "chunk_index": idx,
+                            "title": title,
+                            "chunk_text": chunk,
+                            "source": "pinecone-only",
+                        },
+                    }
+                )
+            if vectors:
+                index.upsert(vectors=vectors)
+            return {"id": knowledge_id, "title": title, "content": content}
+
         knowledge = await super().create(data)
         await self._upsert_chunks_and_embeddings(knowledge)
         return knowledge
 
     async def patch(self, id: int, data: dict):
+        if self._is_pinecone_only_mode():
+            current_title = str(data.get("title", "")).strip()
+            updated_content = str(data.get("content", "")).strip()
+            if not updated_content:
+                raise RuntimeError(
+                    "In Pinecone-only mode, PATCH requires 'content' to rebuild vectors."
+                )
+            if not current_title:
+                current_title = f"Knowledge {id}"
+
+            index = self._get_pinecone_index()
+            index.delete(filter={"knowledge_id": {"$eq": id}})
+
+            chunks = self._chunk_text(updated_content)
+            vectors = []
+            for idx, chunk in enumerate(chunks):
+                vector_id = f"knowledge-{id}-chunk-{idx}"
+                vectors.append(
+                    {
+                        "id": vector_id,
+                        "values": self._get_embedding(chunk),
+                        "metadata": {
+                            "knowledge_id": id,
+                            "chunk_index": idx,
+                            "title": current_title,
+                            "chunk_text": chunk,
+                            "source": "pinecone-only",
+                        },
+                    }
+                )
+            if vectors:
+                index.upsert(vectors=vectors)
+            return {"id": id, "title": current_title, "content": updated_content}
+
         knowledge = await super().patch(id=id, data=data)
         if "content" in data:
             await self.reindex_knowledge(knowledge.id)
@@ -160,6 +239,11 @@ class KnowledgeService(BaseService):
                 )
 
     async def delete(self, id: int):
+        if self._is_pinecone_only_mode():
+            index = self._get_pinecone_index()
+            index.delete(filter={"knowledge_id": {"$eq": id}})
+            return
+
         index = self._get_pinecone_index()
         async with DatabaseConfig.async_session() as session:
             result = await session.execute(
@@ -185,34 +269,55 @@ class KnowledgeService(BaseService):
         sources: List[Dict[str, Any]] = []
         context_parts: List[str] = []
 
-        async with DatabaseConfig.async_session() as session:
+        if self._is_pinecone_only_mode():
             for match in matches:
                 metadata = match.get("metadata", {})
-                chunk_id = metadata.get("chunk_id")
-                if not chunk_id:
+                chunk_text = metadata.get("chunk_text")
+                if not chunk_text:
                     continue
-
-                chunk_result = await session.execute(
-                    select(KnowledgeChunk, KnowledgeRecord)
-                    .join(KnowledgeRecord, KnowledgeChunk.knowledge_id == KnowledgeRecord.id)
-                    .where(KnowledgeChunk.id == int(chunk_id))
-                )
-                row = chunk_result.first()
-                if not row:
-                    continue
-
-                chunk, knowledge = row
+                title = metadata.get("title", "Untitled")
+                knowledge_id = metadata.get("knowledge_id")
+                chunk_index = metadata.get("chunk_index")
                 score = float(match.get("score", 0.0))
-                context_parts.append(f"[{knowledge.title}] {chunk.chunk_text}")
+                context_parts.append(f"[{title}] {chunk_text}")
                 sources.append(
                     {
-                        "chunk_id": chunk.id,
-                        "knowledge_id": knowledge.id,
-                        "title": knowledge.title,
+                        "chunk_id": int(chunk_index) if chunk_index is not None else -1,
+                        "knowledge_id": int(knowledge_id) if knowledge_id is not None else -1,
+                        "title": str(title),
                         "score": score,
-                        "chunk_text": chunk.chunk_text,
+                        "chunk_text": str(chunk_text),
                     }
                 )
+        else:
+            async with DatabaseConfig.async_session() as session:
+                for match in matches:
+                    metadata = match.get("metadata", {})
+                    chunk_id = metadata.get("chunk_id")
+                    if not chunk_id:
+                        continue
+
+                    chunk_result = await session.execute(
+                        select(KnowledgeChunk, KnowledgeRecord)
+                        .join(KnowledgeRecord, KnowledgeChunk.knowledge_id == KnowledgeRecord.id)
+                        .where(KnowledgeChunk.id == int(chunk_id))
+                    )
+                    row = chunk_result.first()
+                    if not row:
+                        continue
+
+                    chunk, knowledge = row
+                    score = float(match.get("score", 0.0))
+                    context_parts.append(f"[{knowledge.title}] {chunk.chunk_text}")
+                    sources.append(
+                        {
+                            "chunk_id": chunk.id,
+                            "knowledge_id": knowledge.id,
+                            "title": knowledge.title,
+                            "score": score,
+                            "chunk_text": chunk.chunk_text,
+                        }
+                    )
 
         context = "\n\n".join(context_parts)
         prompt = (
