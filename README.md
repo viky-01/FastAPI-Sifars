@@ -4,7 +4,7 @@ This repository now includes:
 
 - FastAPI + Poetry project setup
 - SQLAlchemy + Alembic migrations
-- PostgreSQL-backed knowledge + metadata storage
+- Optional PostgreSQL-backed knowledge + metadata storage
 - CRUD APIs for knowledge records
 - Gemini + Pinecone powered `/ask` RAG endpoint (Pinecone is the vector store)
 
@@ -38,16 +38,16 @@ cp .env.example .env
 
 Required variables:
 
-- `SQLALCHEMY_DATABASE_URI`
 - `GEMINI_API_KEY`
 - `PINECONE_API_KEY`
 - `PINECONE_INDEX_NAME`
 
-> Note: This project currently uses **both** PostgreSQL and Pinecone.
-> Pinecone stores vectors, while PostgreSQL stores knowledge records/chunks and IDs used by CRUD and source retrieval.
-> If you want a Pinecone-only architecture, code changes are required (it is not yet supported out of the box).
+Optional variables:
 
-## 3) Run PostgreSQL locally
+- `SQLALCHEMY_DATABASE_URI` (required only if you want SQL-backed CRUD and migrations)
+- `PINECONE_ONLY_MODE=true` (forces Pinecone-only behavior even if DB URL is set)
+
+## 3) (Optional) Run PostgreSQL locally
 
 Example with Docker:
 
@@ -55,7 +55,7 @@ Example with Docker:
 docker run --name rag-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=knowledge_rag -p 5432:5432 -d postgres:16
 ```
 
-## 4) Apply migrations
+## 4) (Optional) Apply migrations
 
 ```bash
 poetry run alembic upgrade head
@@ -68,6 +68,12 @@ poetry run python main.py
 ```
 
 Swagger docs: `http://127.0.0.1:8000/docs`
+
+### Pinecone-only mode notes
+
+- If `SQLALCHEMY_DATABASE_URI` is not set, app startup skips DB migrations automatically.
+- In Pinecone-only mode, knowledge chunks and retrieval sources are read directly from Pinecone metadata.
+- For best results in Pinecone-only mode, create/patch knowledge through this service so metadata contains `title` and `chunk_text`.
 
 ## API Endpoints
 
