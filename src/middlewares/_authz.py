@@ -11,6 +11,15 @@ from ._public_paths import is_authn_only_path, is_public_path
 _SAFE_PERMISSION_PATTERN = re.compile(r"^[a-z0-9_*:. ]+$")
 
 
+async def compute_scope_filters(user, resource: str, column_names: set[str]):
+    """
+    Optional hook for row-level scoping.
+
+    Returning None means no additional DB-level filters should be applied.
+    """
+    return None
+
+
 class AuthorizationMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, permission_resolver: PermissionResolver | None = None):
         super().__init__(app)

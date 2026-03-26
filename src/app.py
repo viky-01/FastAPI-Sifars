@@ -30,9 +30,9 @@ def run_upgrade(connection, alembic_config: Config):
 async def run_migrations():
     logger.info("Running migrations if any...")
     alembic_config = Config("alembic.ini")
-    alembic_config.set_main_option(
-        "sqlalchemy.url", os.getenv("SQLALCHEMY_DATABASE_URI")
-    )
+    database_url = os.getenv("SQLALCHEMY_DATABASE_URI")
+    if database_url:
+        alembic_config.set_main_option("sqlalchemy.url", database_url)
     async with DatabaseConfig.get_engine().begin() as session:
         await session.run_sync(run_upgrade, alembic_config)
 
